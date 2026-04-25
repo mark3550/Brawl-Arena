@@ -1,0 +1,900 @@
+import { useState, useEffect } from “react”;
+
+/* ─── CONSTANTS ──────────────────────────────────────────────── */
+const GLOW = [
+{ c: “#00CFFF”, d: “rgba(0,207,255,0.45)”, dd: “rgba(0,207,255,0.1)” },
+{ c: “#CC44FF”, d: “rgba(204,68,255,0.45)”, dd: “rgba(204,68,255,0.1)” },
+{ c: “#FFD700”, d: “rgba(255,215,0,0.45)”, dd: “rgba(255,215,0,0.1)” },
+{ c: “#FF2D87”, d: “rgba(255,45,135,0.45)”, dd: “rgba(255,45,135,0.1)” },
+{ c: “#FF6600”, d: “rgba(255,102,0,0.45)”, dd: “rgba(255,102,0,0.1)” },
+{ c: “#00FF88”, d: “rgba(0,255,136,0.45)”, dd: “rgba(0,255,136,0.1)” },
+];
+
+const BS_RANKS = [
+“Bronze I”,“Bronze II”,“Bronze III”,
+“Silver I”,“Silver II”,“Silver III”,
+“Gold I”,“Gold II”,“Gold III”,
+“Diamond I”,“Diamond II”,“Diamond III”,
+“Mythic I”,“Mythic II”,“Mythic III”,
+“Legendary I”,“Legendary II”,“Legendary III”,
+“Masters”,
+];
+
+const RANKED_MODES = [“Gem Grab”,“Brawl Ball”,“Bounty”,“Knockout”,“Hot Zone”,“Heist”,“Wipeout”];
+
+const MODE_COLOR = {
+“Gem Grab”: “#9B59B6”,
+“Brawl Ball”: “#3498DB”,
+“Bounty”: “#F1C40F”,
+“Knockout”: “#E74C3C”,
+“Hot Zone”: “#E67E22”,
+“Heist”: “#2ECC71”,
+“Wipeout”: “#1ABC9C”,
+};
+
+const FALLBACK_MAPS = [
+{ id: 15000260, name: “Hard Rock Mine”,  gameMode: “Gem Grab”,   imageUrl: “https://cdn.brawlify.com/map/regular/15000260.png” },
+{ id: 15000453, name: “Canal Grande”,    gameMode: “Gem Grab”,   imageUrl: “https://cdn.brawlify.com/map/regular/15000453.png” },
+{ id: 15000417, name: “Pinball Dreams”,  gameMode: “Brawl Ball”, imageUrl: “https://cdn.brawlify.com/map/regular/15000417.png” },
+{ id: 15000558, name: “Penalty Kick”,    gameMode: “Brawl Ball”, imageUrl: “https://cdn.brawlify.com/map/regular/15000558.png” },
+{ id: 15000109, name: “Out in the Open”, gameMode: “Bounty”,     imageUrl: “https://cdn.brawlify.com/map/regular/15000109.png” },
+{ id: 15000296, name: “Goldarm Gulch”,   gameMode: “Bounty”,     imageUrl: “https://cdn.brawlify.com/map/regular/15000296.png” },
+{ id: 15000219, name: “Flaring Phoenix”, gameMode: “Knockout”,   imageUrl: “https://cdn.brawlify.com/map/regular/15000219.png” },
+{ id: 15000352, name: “Center Stage”,    gameMode: “Knockout”,   imageUrl: “https://cdn.brawlify.com/map/regular/15000352.png” },
+{ id: 15000404, name: “Ring of Fire”,    gameMode: “Hot Zone”,   imageUrl: “https://cdn.brawlify.com/map/regular/15000404.png” },
+{ id: 15000538, name: “Parallel Plays”,  gameMode: “Hot Zone”,   imageUrl: “https://cdn.brawlify.com/map/regular/15000538.png” },
+{ id: 15000072, name: “Safe Zone”,       gameMode: “Heist”,      imageUrl: “https://cdn.brawlify.com/map/regular/15000072.png” },
+{ id: 15000422, name: “Layer Cake”,      gameMode: “Gem Grab”,   imageUrl: “https://cdn.brawlify.com/map/regular/15000422.png” },
+];
+
+/* ─── HELPERS ────────────────────────────────────────────────── */
+function seededShuffle(arr, seed) {
+const a = […arr];
+for (let i = a.length - 1; i > 0; i–) {
+const j = Math.abs((seed * 2654435761 + i * 1234567) % (i + 1));
+[a[i], a[j]] = [a[j], a[i]];
+}
+return a;
+}
+
+function buildTournaments(maps) {
+const TWO_H = 2 * 60 * 60 * 1000;
+const now = Date.now();
+const slot0 = Math.floor(now / TWO_H) * TWO_H;
+const baseNum = Math.floor(slot0 / TWO_H) % 900 + 100;
+return Array.from({ length: 6 }, (_, i) => {
+const start = slot0 + i * TWO_H;
+const end = start + TWO_H;
+const isLive = now >= start && now < end;
+const seed = Math.floor(start / TWO_H);
+const tMaps = seededShuffle(maps, seed).slice(0, 5);
+return {
+id: seed,
+number: baseNum + i,
+start,
+end,
+isLive,
+maps: tMaps,
+regCount: isLive ? 12 + i : Math.max(0, 8 - i * 3),
+maxTeams: 16,
+glowIdx: i % GLOW.length,
+};
+});
+}
+
+function fmtCountdown(ms) {
+if (ms <= 0) return “Startet jetzt!”;
+const h = Math.floor(ms / 3600000);
+const m = Math.floor((ms % 3600000) / 60000);
+const s = Math.floor((ms % 60000) / 1000);
+return h > 0 ? `${h}h ${m}m ${s}s` : m > 0 ? `${m}m ${s}s` : `${s}s`;
+}
+
+function fmtTime(ts) {
+return new Date(ts).toLocaleTimeString(“de-DE”, { hour: “2-digit”, minute: “2-digit” });
+}
+
+/* ─── SUBCOMPONENTS ──────────────────────────────────────────── */
+function LiveBadge() {
+return (
+<span style={{
+display: “inline-flex”, alignItems: “center”, gap: 6,
+background: “rgba(0,255,120,0.12)”, border: “1px solid #00FF7F”,
+borderRadius: 7, padding: “4px 10px”,
+animation: “badgePulse 1.8s ease-in-out infinite”,
+}}>
+<span style={{
+width: 8, height: 8, borderRadius: “50%”, background: “#00FF7F”,
+boxShadow: “0 0 8px #00FF7F”,
+animation: “dotPulse 1.2s ease-in-out infinite”,
+display: “inline-block”,
+}} />
+<span style={{
+fontFamily: “‘Bangers’, cursive”, fontSize: 15, letterSpacing: “0.08em”,
+color: “#00FF7F”, textShadow: “0 0 10px #00FF7F”,
+animation: “textPulse 1.8s ease-in-out infinite”,
+}}>LIVE</span>
+</span>
+);
+}
+
+function MapThumb({ map, onClick }) {
+const [err, setErr] = useState(false);
+const mc = MODE_COLOR[map.gameMode] || “#666”;
+return (
+<div onClick={() => onClick(map)} style={{
+flex: 1, minWidth: 72, maxWidth: 90, aspectRatio: “3/4”,
+borderRadius: 8, overflow: “hidden”, cursor: “pointer”, position: “relative”,
+border: `1.5px solid ${mc}55`, background: “#0A1020”,
+transition: “transform 0.18s ease, box-shadow 0.18s ease”,
+}}
+onMouseEnter={e => { e.currentTarget.style.transform = “scale(1.07)”; e.currentTarget.style.boxShadow = `0 0 12px ${mc}88`; }}
+onMouseLeave={e => { e.currentTarget.style.transform = “scale(1)”; e.currentTarget.style.boxShadow = “none”; }}
+>
+{!err ? (
+<img src={map.imageUrl} alt={map.name} onError={() => setErr(true)}
+style={{ width: “100%”, height: “100%”, objectFit: “cover”, display: “block” }} />
+) : (
+<div style={{
+width: “100%”, height: “100%”,
+background: `linear-gradient(160deg, ${mc}25, #050810)`,
+display: “flex”, alignItems: “center”, justifyContent: “center”,
+padding: 4,
+}}>
+<span style={{ color: mc, fontSize: 9, textAlign: “center”, fontWeight: 800, lineHeight: 1.3 }}>{map.name}</span>
+</div>
+)}
+<div style={{
+position: “absolute”, inset: 0, background: “linear-gradient(transparent 50%, rgba(0,0,0,0.9))”,
+pointerEvents: “none”,
+}} />
+<div style={{
+position: “absolute”, bottom: 2, left: 2, right: 2,
+fontSize: 8, color: “white”, textAlign: “center”, lineHeight: 1.2, fontWeight: 700,
+}}>{map.name}</div>
+<div style={{
+position: “absolute”, top: 3, left: 3,
+background: mc, borderRadius: 3, padding: “1px 4px”,
+fontSize: 7, color: “white”, fontWeight: 800,
+}}>{map.gameMode?.split(” “)[0]}</div>
+</div>
+);
+}
+
+function TournamentCard({ t, onRegister, onMapClick, onBracket }) {
+const [now, setNow] = useState(Date.now());
+const g = GLOW[t.glowIdx];
+
+useEffect(() => {
+const id = setInterval(() => setNow(Date.now()), 1000);
+return () => clearInterval(id);
+}, []);
+
+return (
+<div style={{
+“–gc”: g.c, “–gd”: g.d, “–gdd”: g.dd,
+background: “linear-gradient(160deg, #0D1428 0%, #080E1E 100%)”,
+borderRadius: 16, padding: 20,
+border: `2px solid ${g.c}`,
+boxShadow: `0 0 18px ${g.d}, 0 0 40px ${g.dd}`,
+animation: “cardGlow 3s ease-in-out infinite”,
+display: “flex”, flexDirection: “column”, gap: 14,
+transition: “transform 0.2s”,
+position: “relative”, overflow: “hidden”,
+}}
+onMouseEnter={e => e.currentTarget.style.transform = “translateY(-3px)”}
+onMouseLeave={e => e.currentTarget.style.transform = “translateY(0)”}
+>
+{/* Decorative corner star */}
+<div style={{
+position: “absolute”, top: -20, right: -20,
+width: 80, height: 80, borderRadius: “50%”,
+background: `radial-gradient(circle, ${g.dd} 0%, transparent 70%)`,
+pointerEvents: “none”,
+}} />
+
+```
+  {/* Header row */}
+  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+    <div>
+      <div style={{ fontFamily: "'Bangers', cursive", fontSize: 22, letterSpacing: "0.06em", color: "#FFD700", textShadow: "0 2px 8px rgba(255,215,0,0.4)" }}>
+        BRAWL CUP #{t.number}
+      </div>
+      <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)", marginTop: 2 }}>
+        3v3 • Best of 5 • First to 3 Wins
+      </div>
+    </div>
+    {t.isLive ? <LiveBadge /> : (
+      <div style={{
+        background: "rgba(255,255,255,0.06)", border: "1px solid rgba(255,255,255,0.12)",
+        borderRadius: 7, padding: "4px 10px", fontSize: 11, color: "rgba(255,255,255,0.6)",
+      }}>
+        {fmtTime(t.start)} Uhr
+      </div>
+    )}
+  </div>
+
+  {/* Countdown / Live info */}
+  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+    {t.isLive ? (
+      <div style={{ fontSize: 13, color: "#00FF88", fontWeight: 700 }}>
+        🟢 Turnier läuft — noch {fmtCountdown(t.end - now)}
+      </div>
+    ) : (
+      <div style={{ fontSize: 13, color: "#FFD700", fontWeight: 700 }}>
+        ⏰ {fmtCountdown(t.start - now)}
+      </div>
+    )}
+    <div style={{ fontSize: 12, color: "rgba(255,255,255,0.5)" }}>
+      <span style={{ color: g.c, fontWeight: 800 }}>{t.regCount}</span>/{t.maxTeams} Teams
+    </div>
+  </div>
+
+  {/* Progress bar */}
+  <div style={{ background: "rgba(255,255,255,0.08)", borderRadius: 99, height: 5, overflow: "hidden" }}>
+    <div style={{
+      height: "100%", borderRadius: 99, width: `${(t.regCount / t.maxTeams) * 100}%`,
+      background: `linear-gradient(90deg, ${g.c}, ${g.d})`,
+      boxShadow: `0 0 8px ${g.d}`,
+      transition: "width 0.5s ease",
+    }} />
+  </div>
+
+  {/* Maps */}
+  <div>
+    <div style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", marginBottom: 8, fontWeight: 700, letterSpacing: "0.06em" }}>
+      MAPS (klicken für Vorschau)
+    </div>
+    <div style={{ display: "flex", gap: 6, flexWrap: "nowrap" }}>
+      {t.maps.map(m => (
+        <MapThumb key={m.id} map={m} onClick={onMapClick} />
+      ))}
+    </div>
+  </div>
+
+  {/* Divider */}
+  <div style={{ height: 1, background: `linear-gradient(90deg, transparent, ${g.c}44, transparent)` }} />
+
+  {/* Actions */}
+  <div style={{ display: "flex", gap: 10 }}>
+    <button onClick={() => onRegister(t)} style={{
+      flex: 2, padding: "11px 0",
+      background: t.isLive
+        ? "linear-gradient(135deg, #FFD700, #FFA500)"
+        : "linear-gradient(135deg, #FFD700, #FF9500)",
+      border: "none", borderRadius: 10, cursor: "pointer",
+      fontFamily: "'Bangers', cursive", fontSize: 17, letterSpacing: "0.06em",
+      color: "#07090E", fontWeight: 900,
+      boxShadow: t.isLive ? "0 0 20px rgba(255,215,0,0.5)" : "none",
+      transition: "all 0.2s",
+    }}
+    onMouseEnter={e => { e.target.style.transform = "translateY(-2px)"; e.target.style.boxShadow = "0 6px 20px rgba(255,215,0,0.45)"; }}
+    onMouseLeave={e => { e.target.style.transform = "translateY(0)"; e.target.style.boxShadow = t.isLive ? "0 0 20px rgba(255,215,0,0.5)" : "none"; }}
+    >
+      {t.isLive ? "⚡ JETZT ANMELDEN" : "🎯 ANMELDEN"}
+    </button>
+    <button onClick={() => onBracket(t)} style={{
+      flex: 1, padding: "11px 0",
+      background: "rgba(255,255,255,0.06)", border: `1px solid ${g.c}55`,
+      borderRadius: 10, cursor: "pointer", color: g.c,
+      fontFamily: "'Bangers', cursive", fontSize: 15, letterSpacing: "0.06em",
+      transition: "all 0.2s",
+    }}
+    onMouseEnter={e => { e.target.style.background = `${g.dd}`; e.target.style.borderColor = g.c; }}
+    onMouseLeave={e => { e.target.style.background = "rgba(255,255,255,0.06)"; e.target.style.borderColor = `${g.c}55`; }}
+    >
+      BRACKET
+    </button>
+  </div>
+</div>
+```
+
+);
+}
+
+/* ─── REGISTER MODAL ─────────────────────────────────────────── */
+function ModalOverlay({ children, onClose }) {
+return (
+<div onClick={onClose} style={{
+position: “fixed”, inset: 0, background: “rgba(0,0,0,0.85)”,
+backdropFilter: “blur(6px)”, zIndex: 1000,
+display: “flex”, alignItems: “center”, justifyContent: “center”,
+padding: 16, overflowY: “auto”,
+}}>
+<div onClick={e => e.stopPropagation()} style={{
+width: “100%”, maxWidth: 540,
+background: “linear-gradient(160deg, #0D1428, #080E1E)”,
+border: “2px solid #FFD70044”,
+boxShadow: “0 0 40px rgba(255,215,0,0.15), 0 20px 60px rgba(0,0,0,0.6)”,
+borderRadius: 20, padding: 28,
+animation: “slideIn 0.25s ease-out”,
+maxHeight: “90vh”, overflowY: “auto”,
+}}>
+{children}
+</div>
+</div>
+);
+}
+
+function inp(label, name, form, setForm, type = “text”, placeholder = “”) {
+return (
+<div style={{ marginBottom: 14 }}>
+<label style={{ display: “block”, fontSize: 11, color: “#FFD700”, fontWeight: 800, letterSpacing: “0.07em”, marginBottom: 6 }}>
+{label}
+</label>
+<input
+type={type}
+placeholder={placeholder}
+value={form[name] || “”}
+onChange={e => setForm(f => ({ …f, [name]: e.target.value }))}
+style={{
+width: “100%”, padding: “10px 14px”,
+background: “rgba(255,255,255,0.05)”, border: “1px solid rgba(255,255,255,0.12)”,
+borderRadius: 9, color: “white”, fontSize: 14, outline: “none”,
+fontFamily: “‘Nunito’, sans-serif”, boxSizing: “border-box”,
+transition: “border-color 0.2s”,
+}}
+onFocus={e => e.target.style.borderColor = “#FFD700”}
+onBlur={e => e.target.style.borderColor = “rgba(255,255,255,0.12)”}
+/>
+</div>
+);
+}
+
+function sel(label, name, options, form, setForm) {
+return (
+<div style={{ marginBottom: 14 }}>
+<label style={{ display: “block”, fontSize: 11, color: “#FFD700”, fontWeight: 800, letterSpacing: “0.07em”, marginBottom: 6 }}>
+{label}
+</label>
+<select
+value={form[name] || “”}
+onChange={e => setForm(f => ({ …f, [name]: e.target.value }))}
+style={{
+width: “100%”, padding: “10px 14px”,
+background: “#0D1428”, border: “1px solid rgba(255,255,255,0.12)”,
+borderRadius: 9, color: form[name] ? “white” : “rgba(255,255,255,0.35)”,
+fontSize: 14, outline: “none”, fontFamily: “‘Nunito’, sans-serif”,
+boxSizing: “border-box”, cursor: “pointer”,
+}}
+onFocus={e => e.target.style.borderColor = “#FFD700”}
+onBlur={e => e.target.style.borderColor = “rgba(255,255,255,0.12)”}
+>
+<option value="" disabled>— wählen —</option>
+{options.map(o => <option key={o} value={o} style={{ background: “#0D1428” }}>{o}</option>)}
+</select>
+</div>
+);
+}
+
+function RegisterModal({ tournament, onClose }) {
+const [form, setForm] = useState({});
+const [success, setSuccess] = useState(false);
+
+const handleSubmit = () => {
+const required = [“teamName”,“bsId”,“bsName”,“email”,“friend1”,“friend2”,“trophies”,“rankCurrent”,“rankHighest”];
+if (required.some(k => !form[k])) {
+alert(“Bitte alle Felder ausfüllen!”);
+return;
+}
+setSuccess(true);
+};
+
+return (
+<ModalOverlay onClose={onClose}>
+{success ? (
+<div style={{ textAlign: “center”, padding: 20 }}>
+<div style={{ fontSize: 64, marginBottom: 10 }}>🏆</div>
+<div style={{ fontFamily: “‘Bangers’, cursive”, fontSize: 30, color: “#FFD700”, letterSpacing: “0.06em” }}>
+ANMELDUNG ERFOLGREICH!
+</div>
+<div style={{ color: “rgba(255,255,255,0.65)”, marginTop: 10, marginBottom: 24 }}>
+Team <strong style={{ color: “#FFD700” }}>{form.teamName}</strong> ist für Brawl Cup #{tournament.number} angemeldet.<br />
+Eine Bestätigung wurde an <strong style={{ color: “#FFD700” }}>{form.email}</strong> gesendet.
+</div>
+<div style={{ background: “rgba(255,215,0,0.08)”, border: “1px solid #FFD70044”, borderRadius: 12, padding: 16, marginBottom: 20 }}>
+<div style={{ display: “flex”, justifyContent: “space-between”, fontSize: 13, color: “rgba(255,255,255,0.6)”, marginBottom: 8 }}>
+<span>Turnier</span><span style={{ color: “white” }}>Brawl Cup #{tournament.number}</span>
+</div>
+<div style={{ display: “flex”, justifyContent: “space-between”, fontSize: 13, color: “rgba(255,255,255,0.6)”, marginBottom: 8 }}>
+<span>Team</span><span style={{ color: “#FFD700” }}>{form.teamName}</span>
+</div>
+<div style={{ display: “flex”, justifyContent: “space-between”, fontSize: 13, color: “rgba(255,255,255,0.6)” }}>
+<span>Startzeit</span><span style={{ color: “white” }}>{fmtTime(tournament.start)} Uhr</span>
+</div>
+</div>
+<button onClick={onClose} style={{
+width: “100%”, padding: “12px 0”,
+background: “linear-gradient(135deg, #FFD700, #FFA500)”,
+border: “none”, borderRadius: 10, cursor: “pointer”,
+fontFamily: “‘Bangers’, cursive”, fontSize: 18, color: “#07090E”, letterSpacing: “0.06em”,
+}}>SCHLIESSEN</button>
+</div>
+) : (
+<>
+<div style={{ display: “flex”, justifyContent: “space-between”, alignItems: “center”, marginBottom: 20 }}>
+<div>
+<div style={{ fontFamily: “‘Bangers’, cursive”, fontSize: 24, color: “#FFD700”, letterSpacing: “0.06em” }}>
+🎯 TEAM ANMELDEN
+</div>
+<div style={{ fontSize: 12, color: “rgba(255,255,255,0.45)”, marginTop: 2 }}>
+Brawl Cup #{tournament.number} • {fmtTime(tournament.start)} Uhr
+</div>
+</div>
+<button onClick={onClose} style={{
+background: “none”, border: “1px solid rgba(255,255,255,0.15)”, borderRadius: 8,
+color: “rgba(255,255,255,0.5)”, cursor: “pointer”, padding: “4px 10px”, fontSize: 16,
+}}>✕</button>
+</div>
+
+```
+      <div style={{ height: 1, background: "linear-gradient(90deg, #FFD70044, transparent)", marginBottom: 20 }} />
+
+      <div style={{ fontSize: 11, color: "#00CFFF", fontWeight: 800, letterSpacing: "0.1em", marginBottom: 12 }}>
+        ── TEAM INFO ──
+      </div>
+      {inp("Team Name", "teamName", form, setForm, "text", "z.B. Galaxy Warriors")}
+
+      <div style={{ fontSize: 11, color: "#00CFFF", fontWeight: 800, letterSpacing: "0.1em", marginBottom: 12, marginTop: 4 }}>
+        ── DEINE DATEN (Kapitän) ──
+      </div>
+      {inp("Brawl Stars ID", "bsId", form, setForm, "text", "#XXXXXX")}
+      {inp("Brawl Stars Name", "bsName", form, setForm, "text", "Dein In-Game Name")}
+      {inp("Google E-Mail", "email", form, setForm, "email", "name@gmail.com")}
+
+      <div style={{ fontSize: 11, color: "#00CFFF", fontWeight: 800, letterSpacing: "0.1em", marginBottom: 12, marginTop: 4 }}>
+        ── TEAM MITGLIEDER ──
+      </div>
+      {inp("Mitspieler 1 – Brawl Stars Name", "friend1", form, setForm, "text", "Brawl Stars Name")}
+      {inp("Mitspieler 2 – Brawl Stars Name", "friend2", form, setForm, "text", "Brawl Stars Name")}
+
+      <div style={{ fontSize: 11, color: "#00CFFF", fontWeight: 800, letterSpacing: "0.1em", marginBottom: 12, marginTop: 4 }}>
+        ── STATISTIKEN ──
+      </div>
+      {inp("Trophäen Anzahl", "trophies", form, setForm, "number", "z.B. 35000")}
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12 }}>
+        <div>
+          {sel("Aktueller Rang", "rankCurrent", BS_RANKS, form, setForm)}
+        </div>
+        <div>
+          {sel("Höchster Rang", "rankHighest", BS_RANKS, form, setForm)}
+        </div>
+      </div>
+
+      <div style={{ marginTop: 8 }}>
+        <button onClick={handleSubmit} style={{
+          width: "100%", padding: "13px 0",
+          background: "linear-gradient(135deg, #FFD700, #FFA500)",
+          border: "none", borderRadius: 11, cursor: "pointer",
+          fontFamily: "'Bangers', cursive", fontSize: 20, color: "#07090E",
+          letterSpacing: "0.06em", fontWeight: 900,
+          boxShadow: "0 4px 20px rgba(255,215,0,0.3)",
+          transition: "all 0.2s",
+        }}
+        onMouseEnter={e => { e.target.style.transform = "translateY(-2px)"; e.target.style.boxShadow = "0 8px 30px rgba(255,215,0,0.45)"; }}
+        onMouseLeave={e => { e.target.style.transform = "translateY(0)"; e.target.style.boxShadow = "0 4px 20px rgba(255,215,0,0.3)"; }}
+        >
+          ⚡ JETZT ANMELDEN
+        </button>
+        <div style={{ textAlign: "center", fontSize: 11, color: "rgba(255,255,255,0.3)", marginTop: 10 }}>
+          Durch die Anmeldung akzeptierst du die Turnierregeln.
+        </div>
+      </div>
+    </>
+  )}
+</ModalOverlay>
+```
+
+);
+}
+
+/* ─── MAP MODAL ──────────────────────────────────────────────── */
+function MapModal({ map, onClose }) {
+const mc = MODE_COLOR[map.gameMode] || “#666”;
+const [err, setErr] = useState(false);
+return (
+<ModalOverlay onClose={onClose}>
+<div style={{ textAlign: “center” }}>
+<div style={{ display: “flex”, justifyContent: “space-between”, alignItems: “center”, marginBottom: 16 }}>
+<div>
+<div style={{ fontFamily: “‘Bangers’, cursive”, fontSize: 22, color: “#FFD700”, letterSpacing: “0.06em” }}>{map.name}</div>
+<div style={{
+display: “inline-block”, marginTop: 4,
+background: mc, borderRadius: 6, padding: “2px 10px”,
+fontSize: 12, color: “white”, fontWeight: 800,
+}}>{map.gameMode}</div>
+</div>
+<button onClick={onClose} style={{
+background: “none”, border: “1px solid rgba(255,255,255,0.15)”, borderRadius: 8,
+color: “rgba(255,255,255,0.5)”, cursor: “pointer”, padding: “4px 10px”, fontSize: 16,
+}}>✕</button>
+</div>
+<div style={{
+borderRadius: 14, overflow: “hidden”, border: `2px solid ${mc}66`,
+boxShadow: `0 0 30px ${mc}44`, background: “#050810”,
+}}>
+{!err ? (
+<img src={map.imageUrl} alt={map.name} onError={() => setErr(true)}
+style={{ width: “100%”, display: “block”, maxHeight: 480, objectFit: “contain” }} />
+) : (
+<div style={{
+height: 300, display: “flex”, flexDirection: “column”,
+alignItems: “center”, justifyContent: “center”,
+background: `linear-gradient(135deg, ${mc}15, #050810)`,
+}}>
+<div style={{ fontSize: 40, marginBottom: 10 }}>🗺️</div>
+<div style={{ color: mc, fontWeight: 800 }}>{map.name}</div>
+<div style={{ color: “rgba(255,255,255,0.4)”, fontSize: 12, marginTop: 6 }}>Bild nicht verfügbar</div>
+</div>
+)}
+</div>
+<div style={{ marginTop: 16, fontSize: 12, color: “rgba(255,255,255,0.4)” }}>
+Modus: <strong style={{ color: mc }}>{map.gameMode}</strong> • 3v3 Format
+</div>
+</div>
+</ModalOverlay>
+);
+}
+
+/* ─── BRACKET MODAL ──────────────────────────────────────────── */
+const FAKE_TEAMS = [
+[“Galaxy Warriors”,“Storm Riders”,“Thunder Hawks”,“Iron Wolves”],
+[“Dark Crystals”,“Shadow Foxes”,“Neon Crushers”,“Blaze Squad”],
+[“Ice Serpents”,“Fire Eagles”,“Cosmic Brawlers”,“Steel Phantoms”],
+[“Diamond Killers”,“Ruby Force”,“Emerald Crew”,“Sapphire Clan”],
+];
+
+function BracketModal({ tournament, onClose }) {
+const g = GLOW[tournament.glowIdx];
+const seed = tournament.id % 4;
+const teams = FAKE_TEAMS[seed];
+
+const Match = ({ t1, t2, score1, score2, done }) => (
+<div style={{
+background: “rgba(255,255,255,0.04)”, border: “1px solid rgba(255,255,255,0.1)”,
+borderRadius: 10, overflow: “hidden”, marginBottom: 8,
+}}>
+{[{ name: t1, score: score1, win: done && score1 > score2 },
+{ name: t2, score: score2, win: done && score2 > score1 }].map((team, i) => (
+<div key={i} style={{
+display: “flex”, justifyContent: “space-between”, alignItems: “center”,
+padding: “8px 14px”,
+background: team.win ? `${g.dd}` : “transparent”,
+borderBottom: i === 0 ? “1px solid rgba(255,255,255,0.07)” : “none”,
+}}>
+<div style={{ display: “flex”, alignItems: “center”, gap: 8 }}>
+{team.win && <span style={{ color: g.c, fontSize: 12 }}>✓</span>}
+<span style={{ fontSize: 13, color: team.win ? “white” : “rgba(255,255,255,0.65)”, fontWeight: team.win ? 800 : 400 }}>
+{team.name || “TBD”}
+</span>
+</div>
+{done && <span style={{
+fontFamily: “‘Bangers’, cursive”, fontSize: 18,
+color: team.win ? g.c : “rgba(255,255,255,0.3)”, letterSpacing: “0.05em”,
+}}>{team.score}</span>}
+</div>
+))}
+</div>
+);
+
+return (
+<ModalOverlay onClose={onClose}>
+<div style={{ display: “flex”, justifyContent: “space-between”, alignItems: “center”, marginBottom: 20 }}>
+<div>
+<div style={{ fontFamily: “‘Bangers’, cursive”, fontSize: 24, color: “#FFD700”, letterSpacing: “0.06em” }}>
+🏆 BRACKET
+</div>
+<div style={{ fontSize: 12, color: “rgba(255,255,255,0.45)” }}>
+Brawl Cup #{tournament.number} • Best of 5 • 3v3
+</div>
+</div>
+<button onClick={onClose} style={{
+background: “none”, border: “1px solid rgba(255,255,255,0.15)”, borderRadius: 8,
+color: “rgba(255,255,255,0.5)”, cursor: “pointer”, padding: “4px 10px”, fontSize: 16,
+}}>✕</button>
+</div>
+
+```
+  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
+    {/* Semi-Final 1 */}
+    <div>
+      <div style={{ fontSize: 10, color: g.c, fontWeight: 800, letterSpacing: "0.08em", marginBottom: 8 }}>HALBFINALE 1</div>
+      <Match t1={teams[0]} t2={teams[1]} score1={3} score2={1} done={tournament.isLive} />
+    </div>
+    {/* Semi-Final 2 */}
+    <div>
+      <div style={{ fontSize: 10, color: g.c, fontWeight: 800, letterSpacing: "0.08em", marginBottom: 8 }}>HALBFINALE 2</div>
+      <Match t1={teams[2]} t2={teams[3]} score1={2} score2={3} done={tournament.isLive} />
+    </div>
+  </div>
+
+  <div style={{ height: 1, background: `linear-gradient(90deg, transparent, ${g.c}55, transparent)`, margin: "16px 0" }} />
+
+  {/* Final */}
+  <div style={{ maxWidth: 260, margin: "0 auto" }}>
+    <div style={{ fontSize: 10, color: "#FFD700", fontWeight: 800, letterSpacing: "0.08em", marginBottom: 8, textAlign: "center" }}>
+      ⭐ FINALE ⭐
+    </div>
+    <Match
+      t1={tournament.isLive ? teams[0] : "TBD"}
+      t2={tournament.isLive ? teams[3] : "TBD"}
+      score1={0} score2={0} done={false}
+    />
+  </div>
+
+  {/* Maps */}
+  <div style={{ marginTop: 16, background: "rgba(255,255,255,0.03)", borderRadius: 12, padding: 14 }}>
+    <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", fontWeight: 800, letterSpacing: "0.08em", marginBottom: 10 }}>
+      MAP POOL (Best of 5)
+    </div>
+    <div style={{ display: "flex", gap: 8 }}>
+      {tournament.maps.map((m, i) => {
+        const mc = MODE_COLOR[m.gameMode] || "#666";
+        return (
+          <div key={m.id} style={{ flex: 1, textAlign: "center" }}>
+            <div style={{
+              width: 32, height: 32, borderRadius: 8, background: `${mc}33`,
+              border: `1.5px solid ${mc}66`, margin: "0 auto 4px",
+              display: "flex", alignItems: "center", justifyContent: "center",
+              fontSize: 10, color: mc, fontWeight: 800,
+            }}>
+              {i + 1}
+            </div>
+            <div style={{ fontSize: 8, color: "rgba(255,255,255,0.5)", lineHeight: 1.2 }}>{m.name}</div>
+          </div>
+        );
+      })}
+    </div>
+  </div>
+</ModalOverlay>
+```
+
+);
+}
+
+/* ─── MAIN APP ───────────────────────────────────────────────── */
+export default function BrawlTournaments() {
+const [maps, setMaps] = useState(FALLBACK_MAPS);
+const [tournaments, setTournaments] = useState([]);
+const [regTournament, setRegTournament] = useState(null);
+const [mapModal, setMapModal] = useState(null);
+const [bracketTournament, setBracketTournament] = useState(null);
+const [tick, setTick] = useState(0);
+
+// Fetch maps from Brawlify API
+useEffect(() => {
+(async () => {
+try {
+const res = await fetch(“https://api.brawlify.com/v1/maps”);
+const data = await res.json();
+const ranked = (data.list || []).filter(m =>
+m.gameMode && RANKED_MODES.includes(m.gameMode.name) && !m.disabled
+).map(m => ({
+id: m.id,
+name: m.name,
+gameMode: m.gameMode.name,
+imageUrl: m.imageUrl,
+}));
+if (ranked.length >= 8) setMaps(ranked);
+} catch {
+// keep fallback
+}
+})();
+}, []);
+
+useEffect(() => {
+setTournaments(buildTournaments(maps));
+}, [maps]);
+
+// Refresh countdown every second
+useEffect(() => {
+const id = setInterval(() => {
+setTick(t => t + 1);
+setTournaments(prev => prev.map(t => ({
+…t,
+isLive: Date.now() >= t.start && Date.now() < t.end,
+})));
+}, 1000);
+return () => clearInterval(id);
+}, []);
+
+const hasLive = tournaments.some(t => t.isLive);
+
+return (
+<>
+<style>{`
+@import url(‘https://fonts.googleapis.com/css2?family=Bangers&family=Nunito:wght@400;600;700;800;900&display=swap’);
+
+```
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #070C1A; }
+
+    @keyframes cardGlow {
+      0%,100% { box-shadow: 0 0 18px var(--gd), 0 0 40px var(--gdd); border-color: var(--gc); }
+      50%      { box-shadow: 0 0 30px var(--gd), 0 0 70px var(--gdd); border-color: var(--gc); }
+    }
+    @keyframes dotPulse {
+      0%,100% { box-shadow: 0 0 6px #00FF7F; transform: scale(1); }
+      50%      { box-shadow: 0 0 12px #00FF7F; transform: scale(1.3); }
+    }
+    @keyframes badgePulse {
+      0%,100% { box-shadow: 0 0 10px rgba(0,255,127,0.3); }
+      50%      { box-shadow: 0 0 20px rgba(0,255,127,0.5); }
+    }
+    @keyframes textPulse {
+      0%,100% { text-shadow: 0 0 10px #00FF7F, 0 0 20px #00FF7F; }
+      50%      { text-shadow: 0 0 5px #00FF7F; }
+    }
+    @keyframes slideIn {
+      from { opacity: 0; transform: scale(0.93) translateY(10px); }
+      to   { opacity: 1; transform: scale(1) translateY(0); }
+    }
+    @keyframes headerGlow {
+      0%,100% { text-shadow: 0 0 20px rgba(255,215,0,0.6), 0 0 40px rgba(255,215,0,0.3); }
+      50%      { text-shadow: 0 0 35px rgba(255,215,0,0.9), 0 0 70px rgba(255,215,0,0.5); }
+    }
+    @keyframes starAnim {
+      0%,100% { opacity: 0.2; }
+      50%      { opacity: 0.8; }
+    }
+    @keyframes fadeUpIn {
+      from { opacity: 0; transform: translateY(24px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .card-enter { animation: fadeUpIn 0.5s ease-out both; }
+  `}</style>
+
+  <div style={{
+    minHeight: "100vh",
+    background: "radial-gradient(ellipse at 50% 0%, #0D1832 0%, #070C1A 60%)",
+    color: "white",
+    fontFamily: "'Nunito', sans-serif",
+    position: "relative",
+    overflow: "hidden",
+  }}>
+
+    {/* Background stars */}
+    {Array.from({ length: 40 }, (_, i) => (
+      <div key={i} style={{
+        position: "fixed",
+        left: `${(i * 137.5) % 100}%`,
+        top: `${(i * 97.3) % 100}%`,
+        width: i % 3 === 0 ? 3 : 2,
+        height: i % 3 === 0 ? 3 : 2,
+        borderRadius: "50%",
+        background: "white",
+        animation: `starAnim ${2 + (i % 4)}s ease-in-out infinite`,
+        animationDelay: `${(i * 0.3) % 3}s`,
+        opacity: 0.3,
+        pointerEvents: "none",
+      }} />
+    ))}
+
+    {/* ── HEADER ── */}
+    <header style={{
+      position: "sticky", top: 0, zIndex: 100,
+      background: "rgba(7,12,26,0.92)",
+      backdropFilter: "blur(16px)",
+      borderBottom: "1px solid rgba(255,215,0,0.12)",
+      padding: "0 24px",
+      height: 64,
+      display: "flex", alignItems: "center", justifyContent: "space-between",
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <div style={{ fontSize: 28 }}>🥊</div>
+        <div>
+          <div style={{
+            fontFamily: "'Bangers', cursive", fontSize: 22, letterSpacing: "0.08em",
+            color: "#FFD700",
+            animation: "headerGlow 3s ease-in-out infinite",
+          }}>
+            BRAWL TOURNAMENTS
+          </div>
+          <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", letterSpacing: "0.06em", marginTop: -2 }}>
+            3v3 • RANKED MAPS • BEST OF 5
+          </div>
+        </div>
+      </div>
+      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        {hasLive && <LiveBadge />}
+        <div style={{
+          background: "rgba(255,255,255,0.05)", border: "1px solid rgba(255,255,255,0.1)",
+          borderRadius: 8, padding: "6px 14px", fontSize: 13, color: "rgba(255,255,255,0.6)",
+        }}>
+          Alle 2 Stunden neu
+        </div>
+      </div>
+    </header>
+
+    {/* ── HERO ── */}
+    <div style={{ textAlign: "center", padding: "52px 24px 40px", position: "relative" }}>
+      <div style={{
+        position: "absolute", left: "50%", top: "50%", transform: "translate(-50%,-50%)",
+        width: 400, height: 200, borderRadius: "50%",
+        background: "radial-gradient(ellipse, rgba(255,215,0,0.06) 0%, transparent 70%)",
+        pointerEvents: "none",
+      }} />
+      <div style={{
+        fontFamily: "'Bangers', cursive", fontSize: "clamp(36px, 8vw, 72px)",
+        letterSpacing: "0.07em", lineHeight: 1.05,
+        background: "linear-gradient(135deg, #FFD700, #FF9900, #FFD700)",
+        WebkitBackgroundClip: "text", WebkitTextFillColor: "transparent",
+        animation: "headerGlow 3s ease-in-out infinite",
+      }}>
+        WERDE DER BESTE BRAWLER!
+      </div>
+      <div style={{ color: "rgba(255,255,255,0.5)", marginTop: 12, fontSize: 15 }}>
+        Melde dein Team an und kämpfe um den Turniersieg. Jede 2 Stunden startet ein neues Turnier.
+      </div>
+      <div style={{
+        display: "flex", justifyContent: "center", gap: 24, marginTop: 24, flexWrap: "wrap",
+      }}>
+        {[["🏆","Turniere","Alle 2 Std."],["⚔️","Format","3v3 Best of 5"],["🗺️","Maps","Ranked Maps"],["👥","Teams","Bis zu 16"]].map(([icon, label, val]) => (
+          <div key={label} style={{
+            background: "rgba(255,255,255,0.04)", border: "1px solid rgba(255,255,255,0.08)",
+            borderRadius: 12, padding: "12px 20px", minWidth: 110, textAlign: "center",
+          }}>
+            <div style={{ fontSize: 22 }}>{icon}</div>
+            <div style={{ fontSize: 10, color: "rgba(255,255,255,0.4)", fontWeight: 700, letterSpacing: "0.06em", marginTop: 4 }}>{label}</div>
+            <div style={{ fontSize: 13, color: "#FFD700", fontWeight: 800 }}>{val}</div>
+          </div>
+        ))}
+      </div>
+    </div>
+
+    {/* ── SECTION TITLE ── */}
+    <div style={{ padding: "0 24px 16px", display: "flex", alignItems: "center", gap: 16 }}>
+      <div style={{ fontFamily: "'Bangers', cursive", fontSize: 22, color: "white", letterSpacing: "0.06em" }}>
+        KOMMENDE TURNIERE
+      </div>
+      <div style={{ flex: 1, height: 1, background: "linear-gradient(90deg, rgba(255,255,255,0.15), transparent)" }} />
+      {hasLive && <LiveBadge />}
+    </div>
+
+    {/* ── TOURNAMENT GRID ── */}
+    <div style={{
+      display: "grid",
+      gridTemplateColumns: "repeat(auto-fill, minmax(340px, 1fr))",
+      gap: 20, padding: "0 24px 60px",
+      maxWidth: 1200, margin: "0 auto",
+    }}>
+      {tournaments.map((t, i) => (
+        <div key={t.id} className="card-enter" style={{ animationDelay: `${i * 0.08}s` }}>
+          <TournamentCard
+            t={t}
+            onRegister={setRegTournament}
+            onMapClick={setMapModal}
+            onBracket={setBracketTournament}
+          />
+        </div>
+      ))}
+    </div>
+
+    {/* ── FOOTER ── */}
+    <div style={{
+      textAlign: "center", padding: "20px 24px",
+      borderTop: "1px solid rgba(255,255,255,0.06)",
+      fontSize: 12, color: "rgba(255,255,255,0.25)",
+    }}>
+      Brawl Tournaments — Fanseite • Nicht offiziell mit Supercell verbunden
+      <br />
+      Map-Daten: Brawlify.com
+    </div>
+  </div>
+
+  {/* ── MODALS ── */}
+  {regTournament && (
+    <RegisterModal tournament={regTournament} onClose={() => setRegTournament(null)} />
+  )}
+  {mapModal && (
+    <MapModal map={mapModal} onClose={() => setMapModal(null)} />
+  )}
+  {bracketTournament && (
+    <BracketModal tournament={bracketTournament} onClose={() => setBracketTournament(null)} />
+  )}
+</>
+```
+
+);
+}
